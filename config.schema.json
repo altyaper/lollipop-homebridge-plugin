@@ -1,0 +1,26 @@
+{
+  "pluginAlias": "LollipopCamera",
+  "pluginType": "platform",
+  "singular": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Platform Name",
+        "type": "string",
+        "default": "Lollipop"
+      },
+      "email": {
+        "title": "Lollipop Account Email",
+        "type": "string",
+        "placeholder": "you@example.com"
+      },
+      "password": {
+        "title": "Lollipop Account Password",
+        "type": "string",
+        "placeholder": "your Lollipop app password"
+      }
+    },
+    "required": ["name", "email", "password"]
+  }
+}
