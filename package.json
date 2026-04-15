@@ -1,6 +1,6 @@
 {
   "name": "homebridge-lollipop-plugin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "displayName": "Lollipop Monitor",
   "icon": "assets/logo.png",
   "description": "Homebridge plugin for Lollipop baby monitor cameras",
