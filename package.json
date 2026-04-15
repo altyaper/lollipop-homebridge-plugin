@@ -1,5 +1,5 @@
 {
-  "name": "homebridge-lollipop-monitor",
+  "name": "homebridge-lollipop-plugin",
   "version": "1.0.0",
   "displayName": "Lollipop Monitor",
   "icon": "assets/logo.png",

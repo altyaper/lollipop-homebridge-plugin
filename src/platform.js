@@ -2,7 +2,7 @@
 
 const { LollipopCameraAccessory } = require('./cameraAccessory');
 
-const PLUGIN_NAME = 'homebridge-lollipop-monitor';
+const PLUGIN_NAME = 'homebridge-lollipop-plugin';
 const PLATFORM_NAME = 'LollipopCamera';
 
 class LollipopPlatform {
