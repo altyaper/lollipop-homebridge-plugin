@@ -1,240 +1,202 @@
 'use strict';
 
-const { spawn } = require('child_process');
-const { DigestProxy } = require('./digestProxy');
+const crypto = require('crypto');
+const mqtt = require('mqtt');
+const { StreamingDelegate } = require('./streamingDelegate');
+const { RecordingDelegate } = require('./recordingDelegate');
+const { Prebuffer } = require('./prebuffer');
+const { SensorManager } = require('./sensors');
+const { SoundMachine } = require('./soundMachine');
 
 class LollipopCameraAccessory {
-  constructor(platform, accessory, cameraConfig) {
+  constructor(platform, accessory, config) {
     this.platform = platform;
     this.accessory = accessory;
-    this.config = cameraConfig;
+    this.config = config;
     this.log = platform.log;
     this.hap = platform.api.hap;
-    this.proxy = new DigestProxy(this.log, cameraConfig);
-    this.proxyPort = null;
-    this.activeSessions = new Map();
+    this.debug = platform.debug;
 
-    this.setupAccessoryInfo();
-    this.setupCameraService();
-  }
+    this.pairingID = null;
+    this.rtspUrl = null;
+    this.mqttClient = null;
+    this.sensors = null;
+    this.soundMachine = null;
+    this.prebuffer = null;
 
-  setupAccessoryInfo() {
     this.accessory.getService(this.hap.Service.AccessoryInformation)
       .setCharacteristic(this.hap.Characteristic.Manufacturer, 'Lollipop')
       .setCharacteristic(this.hap.Characteristic.Model, 'Lollipop Pro')
-      .setCharacteristic(this.hap.Characteristic.SerialNumber, this.config.cameraId);
+      .setCharacteristic(this.hap.Characteristic.SerialNumber, config.ip);
+
+    this.initialize();
   }
 
-  setupCameraService() {
+  async initialize() {
+    try {
+      this.log.info(`[${this.config.name}] Discovering pairingID via MQTT...`);
+      await this.discoverPairingID();
+
+      const hash = crypto.createHash('md5').update(this.pairingID).digest('hex');
+      this.rtspUrl = `rtsp://${this.config.ip}:554/live/${hash}/ch00_0`;
+      this.log.info(`[${this.config.name}] pairingID: ${this.pairingID}`);
+      this.log.info(`[${this.config.name}] RTSP: ${this.rtspUrl}`);
+
+      await this.setupMQTT();
+      this.setupHomeKit();
+
+    } catch (err) {
+      this.log.error(`[${this.config.name}] Initialization failed: ${err.message}`);
+    }
+  }
+
+  discoverPairingID() {
+    return new Promise((resolve, reject) => {
+      const client = mqtt.connect(`mqtts://${this.config.ip}:1883`, {
+        rejectUnauthorized: false,
+        connectTimeout: 10000,
+      });
+
+      const timeout = setTimeout(() => {
+        client.end(true);
+        reject(new Error('Timed out waiting for MQTT pairingID'));
+      }, 15000);
+
+      client.on('connect', () => {
+        client.subscribe('#');
+      });
+
+      client.on('message', (topic) => {
+        const id = topic.split('/')[0];
+        if (id) {
+          clearTimeout(timeout);
+          this.pairingID = id;
+          client.end(true);
+          resolve(id);
+        }
+      });
+
+      client.on('error', err => {
+        clearTimeout(timeout);
+        client.end(true);
+        reject(err);
+      });
+    });
+  }
+
+  setupMQTT() {
+    return new Promise((resolve) => {
+      const client = mqtt.connect(`mqtts://${this.config.ip}:1883`, {
+        rejectUnauthorized: false,
+        reconnectPeriod: 5000,
+      });
+
+      this.mqttClient = client;
+      const pid = this.pairingID;
+
+      client.on('connect', () => {
+        this.log.info(`[${this.config.name}] MQTT connected`);
+        client.subscribe(`${pid}/liveNote`);
+        client.subscribe(`${pid}/prenotify`);
+        client.subscribe(`${pid}/musicStatus/return`);
+        client.subscribe(`${pid}/cameraStatus/return`);
+        resolve();
+      });
+
+      client.on('message', (topic, message) => {
+        try {
+          const payload = JSON.parse(message.toString());
+          if (topic === `${pid}/liveNote`) {
+            const motion = payload?.result?.motion;
+            if (motion !== undefined && this.sensors) {
+              this.sensors.triggerMovement(motion);
+            }
+          } else if (topic === `${pid}/prenotify`) {
+            const events = payload?.param?.event_params || [];
+            for (const e of events) {
+              if (this.sensors) this.sensors.triggerEvent(e.event_type);
+            }
+          } else if (topic === `${pid}/musicStatus/return`) {
+            if (this.soundMachine) this.soundMachine.handleStatus(payload);
+          } else if (topic === `${pid}/cameraStatus/return`) {
+            const fw = (Array.isArray(payload) ? payload[1] : payload)?.result?.firmwareVersion;
+            if (fw) {
+              this.accessory.getService(this.hap.Service.AccessoryInformation)
+                .setCharacteristic(this.hap.Characteristic.FirmwareRevision, fw);
+            }
+          }
+        } catch (_) {}
+      });
+
+      client.on('error', err => {
+        if (this.debug) this.log.debug(`[${this.config.name}] MQTT error: ${err.message}`);
+      });
+    });
+  }
+
+  setupHomeKit() {
     const hap = this.hap;
-    const streamingOptions = {
-      supportedCryptoSuites: [hap.SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
-      video: {
-        resolutions: [
-          [1920, 1080, 30],
-          [1280, 720, 30],
-          [640, 480, 30],
-          [640, 360, 30],
-          [480, 270, 30],
-          [320, 240, 15],
-        ],
-        codec: {
-          profiles: [hap.H264Profile.BASELINE, hap.H264Profile.MAIN, hap.H264Profile.HIGH],
-          levels: [hap.H264Level.LEVEL3_1, hap.H264Level.LEVEL3_2, hap.H264Level.LEVEL4_0],
+    const config = this.config;
+
+    // Sensors
+    this.sensors = new SensorManager(this.log, hap, this.accessory, config);
+
+    // Sound machine
+    if (config.enableSoundMachine !== false) {
+      this.soundMachine = new SoundMachine(this.log, hap, this.accessory, this.mqttClient, this.pairingID);
+    }
+
+    // Prebuffer for HKSV
+    if (config.hksv !== false) {
+      this.prebuffer = new Prebuffer(this.log, this.rtspUrl);
+      this.prebuffer.start();
+    }
+
+    // Streaming delegate
+    const streamingDelegate = new StreamingDelegate(this.log, hap, this.rtspUrl);
+
+    // Recording delegate (HKSV)
+    const recordingDelegate = config.hksv !== false
+      ? new RecordingDelegate(this.log, hap, this.rtspUrl, this.prebuffer)
+      : undefined;
+
+    // Camera controller options
+    const controllerOptions = {
+      cameraStreamCount: 2,
+      delegate: streamingDelegate,
+      streamingOptions: {
+        supportedCryptoSuites: [hap.SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
+        video: {
+          resolutions: [
+            [1920, 1080, 30], [1280, 720, 30],
+            [640, 480, 30], [640, 360, 30],
+            [480, 270, 30], [320, 240, 15],
+          ],
+          codec: {
+            profiles: [hap.H264Profile.BASELINE, hap.H264Profile.MAIN, hap.H264Profile.HIGH],
+            levels: [hap.H264Level.LEVEL3_1, hap.H264Level.LEVEL3_2, hap.H264Level.LEVEL4_0],
+          },
         },
-      },
-      audio: {
-        codecs: [
-          {
-            type: hap.AudioStreamingCodecType.OPUS,
-            samplerate: hap.AudioStreamingSamplerate.KHZ_24,
-          },
-          {
-            type: hap.AudioStreamingCodecType.OPUS,
-            samplerate: hap.AudioStreamingSamplerate.KHZ_16,
-          },
-        ],
+        audio: {
+          codecs: [
+            { type: hap.AudioStreamingCodecType.OPUS, samplerate: hap.AudioStreamingSamplerate.KHZ_24 },
+            { type: hap.AudioStreamingCodecType.OPUS, samplerate: hap.AudioStreamingSamplerate.KHZ_16 },
+          ],
+        },
       },
     };
 
-    this.log.info(`[${this.config.name}] streamingOptions: ${JSON.stringify(streamingOptions)}`);
-
-    const streamController = new hap.CameraController({
-      cameraStreamCount: 2,
-      delegate: this,
-      streamingOptions,
-    });
-
-    this.accessory.configureController(streamController);
-  }
-
-  async ensureProxy() {
-    if (!this.proxyPort) {
-      this.proxyPort = await this.proxy.start();
-    }
-    return this.proxyPort;
-  }
-
-  // --- CameraStreamingDelegate ---
-
-  async handleSnapshotRequest(request, callback) {
-    try {
-      const port = await this.ensureProxy();
-      const streamPath = this.config.streamPath || '/stream.m3u8';
-      const http = require('http');
-
-      // Get snapshot via FFmpeg from the proxy stream
-      const ffmpegArgs = [
-        '-re', '-i', `http://127.0.0.1:${port}${streamPath}`,
-        '-vframes', '1',
-        '-f', 'image2',
-        '-vcodec', 'mjpeg',
-        '-s', `${request.width}x${request.height}`,
-        'pipe:1',
-      ];
-
-      const chunks = [];
-      let ffmpegErr = '';
-      const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-      ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
-      ffmpeg.stderr.on('data', d => { ffmpegErr += d.toString(); });
-
-      ffmpeg.on('close', (code) => {
-        if (code === 0 && chunks.length > 0) {
-          callback(undefined, Buffer.concat(chunks));
-        } else {
-          this.log.error(`[${this.config.name}] Snapshot FFmpeg exited with code ${code}`);
-          this.log.error(`[${this.config.name}] FFmpeg stderr: ${ffmpegErr.slice(-500)}`);
-          callback(new Error('Snapshot failed'));
-        }
-      });
-    } catch (err) {
-      this.log.error(`[${this.config.name}] Snapshot error:`, err.message);
-      callback(err);
-    }
-  }
-
-  async prepareStream(request, callback) {
-    const sessionId = request.sessionID;
-    const streamPath = this.config.streamPath || '/stream.m3u8';
-
-    try {
-      const port = await this.ensureProxy();
-
-      const videoSSRC = this.hap.CameraController.generateSynchronisationSource();
-      const audioSSRC = this.hap.CameraController.generateSynchronisationSource();
-
-      const videoInfo = request.video;
-      const audioInfo = request.audio;
-
-      const sessionInfo = {
-        address: request.targetAddress,
-        videoPort: videoInfo.port,
-        videoSSRC,
-        videoCryptoSuite: videoInfo.srtpCryptoSuite,
-        videoSRTP: Buffer.concat([videoInfo.srtp_key, videoInfo.srtp_salt]),
-        audioPort: audioInfo.port,
-        audioSSRC,
-        audioCryptoSuite: audioInfo.srtpCryptoSuite,
-        audioSRTP: Buffer.concat([audioInfo.srtp_key, audioInfo.srtp_salt]),
-        proxyPort: port,
-        streamPath,
+    if (recordingDelegate) {
+      controllerOptions.recording = {
+        options: recordingDelegate.recordingOptions,
+        delegate: recordingDelegate,
       };
-
-      this.activeSessions.set(sessionId, sessionInfo);
-
-      callback(undefined, {
-        video: {
-          port: videoInfo.port,
-          ssrc: videoSSRC,
-          srtp_key: videoInfo.srtp_key,
-          srtp_salt: videoInfo.srtp_salt,
-        },
-        audio: {
-          port: audioInfo.port,
-          ssrc: audioSSRC,
-          srtp_key: audioInfo.srtp_key,
-          srtp_salt: audioInfo.srtp_salt,
-        },
-      });
-    } catch (err) {
-      this.log.error(`[${this.config.name}] prepareStream error:`, err.message);
-      callback(err);
     }
-  }
 
-  async handleStreamRequest(request, callback) {
-    const sessionId = request.sessionID;
+    const controller = new hap.CameraController(controllerOptions);
+    this.accessory.configureController(controller);
 
-    if (request.type === 'start') {
-      const sessionInfo = this.activeSessions.get(sessionId);
-      if (!sessionInfo) { callback(new Error('No session info')); return; }
-
-      const { width, height, fps, max_bit_rate } = request.video;
-      this.log.info(`[${this.config.name}] Audio request: codec=${request.audio.codec} sampleRate=${request.audio.sample_rate} channel=${request.audio.channel}`);
-
-      const videoSrtpParams = sessionInfo.videoSRTP.toString('base64');
-      const audioSrtpParams = sessionInfo.audioSRTP.toString('base64');
-      this.log.info(`[${this.config.name}] SRTP key bytes: video=${sessionInfo.videoSRTP.length} audio=${sessionInfo.audioSRTP.length}`);
-      const audioSampleRate = request.audio.sample_rate || 24;
-      const audioCodec = request.audio.codec === 'AAC-eld' ? 'aac' : 'libopus';
-
-      const ffmpegArgs = [
-        '-re',
-        '-i', `http://127.0.0.1:${sessionInfo.proxyPort}${sessionInfo.streamPath}`,
-        // Video output — map video stream, no audio, HLS AVCC→Annex B
-        '-map', '0:v:0',
-        '-an',
-        '-vcodec', 'copy',
-        '-bsf:v', 'h264_mp4toannexb',
-        '-payload_type', '99',
-        '-ssrc', String(sessionInfo.videoSSRC),
-        '-f', 'rtp',
-        '-srtp_out_suite', 'AES_CM_128_HMAC_SHA1_80',
-        '-srtp_out_params', videoSrtpParams,
-        `srtp://${sessionInfo.address}:${sessionInfo.videoPort}?rtcpport=${sessionInfo.videoPort}&pkt_size=1316`,
-        // Audio output — map audio stream, no video
-        '-map', '0:a:0',
-        '-vn',
-        '-acodec', audioCodec,
-        '-ac', '1',
-        '-ar', `${audioSampleRate}000`,
-        '-b:a', '24k',
-        '-payload_type', '110',
-        '-ssrc', String(sessionInfo.audioSSRC),
-        '-f', 'rtp',
-        '-srtp_out_suite', 'AES_CM_128_HMAC_SHA1_80',
-        '-srtp_out_params', audioSrtpParams,
-        `srtp://${sessionInfo.address}:${sessionInfo.audioPort}?rtcpport=${sessionInfo.audioPort}&pkt_size=188`,
-      ];
-
-      this.log.info(`[${this.config.name}] Starting stream FFmpeg: ffmpeg ${ffmpegArgs.join(' ')}`);
-
-      let streamErr = '';
-      const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-      ffmpeg.stderr.on('data', data => { streamErr += data.toString(); });
-
-      ffmpeg.on('close', (code) => {
-        if (code !== 0) this.log.error(`[${this.config.name}] FFmpeg stream stderr: ${streamErr.slice(-800)}`);
-        this.log.info(`[${this.config.name}] FFmpeg stream ended (code ${code})`);
-        this.activeSessions.delete(sessionId);
-      });
-
-      sessionInfo.ffmpeg = ffmpeg;
-      callback();
-
-    } else if (request.type === 'stop' || request.type === 'reconfigure') {
-      const sessionInfo = this.activeSessions.get(sessionId);
-      if (sessionInfo?.ffmpeg) {
-        sessionInfo.ffmpeg.kill('SIGTERM');
-      }
-      this.activeSessions.delete(sessionId);
-      callback();
-    } else {
-      callback();
-    }
+    this.log.info(`[${this.config.name}] HomeKit camera ready`);
   }
 }
 

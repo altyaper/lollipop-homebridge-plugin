@@ -1,7 +1,6 @@
 'use strict';
 
 const { LollipopCameraAccessory } = require('./cameraAccessory');
-const { login, fetchCameras } = require('./lollipopApi');
 
 const PLUGIN_NAME = 'homebridge-lollipop-monitor';
 const PLATFORM_NAME = 'LollipopCamera';
@@ -11,70 +10,57 @@ class LollipopPlatform {
     this.log = log;
     this.config = config;
     this.api = api;
-    this.accessories = new Map(); // uuid → PlatformAccessory
+    this.accessories = new Map();
+    this.debug = config.debug || false;
 
-    if (!config?.email || !config?.password) {
-      this.log.warn('Lollipop: email and password are required in config.');
+    if (!config.cameras || config.cameras.length === 0) {
+      this.log.warn('No cameras configured. Add at least one camera with an IP address.');
       return;
     }
 
-    this.api.on('didFinishLaunching', () => {
-      this.discoverDevices();
-    });
+    this.api.on('didFinishLaunching', () => this.discoverDevices());
   }
 
   configureAccessory(accessory) {
     this.accessories.set(accessory.UUID, accessory);
   }
 
-  async discoverDevices() {
-    try {
-      this.log.info('Logging in to Lollipop API...');
-      const sessionToken = await login(this.config.email, this.config.password);
+  discoverDevices() {
+    const cameras = this.config.cameras || [];
 
-      this.log.info('Fetching cameras...');
-      const cameras = await fetchCameras(sessionToken, this.log.debug.bind(this.log));
-
-      if (cameras.length === 0) {
-        this.log.warn('No cameras found in your Lollipop account.');
-        return;
+    for (const cameraConfig of cameras) {
+      if (!cameraConfig.ip) {
+        this.log.warn(`Camera "${cameraConfig.name}" has no IP address — skipping.`);
+        continue;
       }
 
-      this.log.info(`Found ${cameras.length} camera(s).`);
+      const uuid = this.api.hap.uuid.generate(`lollipop-${cameraConfig.ip}`);
+      const existing = this.accessories.get(uuid);
 
-      for (const cameraConfig of cameras) {
-        const uuid = this.api.hap.uuid.generate(`lollipop-${cameraConfig.cameraId}`);
-        const existing = this.accessories.get(uuid);
-
-        if (existing) {
-          this.log.info(`Restoring: ${cameraConfig.name}`);
-          new LollipopCameraAccessory(this, existing, cameraConfig);
-        } else {
-          this.log.info(`Adding: ${cameraConfig.name}`);
-          const accessory = new this.api.platformAccessory(
-            cameraConfig.name, uuid, this.api.hap.Categories.IP_CAMERA,
-          );
-          this.log.info('HAP keys: ' + Object.keys(this.api.hap).filter(k => k.includes('Camera') || k.includes('H264') || k.includes('SRTP') || k.includes('Audio')).join(', '));
-          new LollipopCameraAccessory(this, accessory, cameraConfig);
-          this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-          this.accessories.set(uuid, accessory);
-        }
-      }
-
-      // Remove accessories no longer in account
-      for (const [uuid, accessory] of this.accessories) {
-        const stillExists = cameras.some(c =>
-          this.api.hap.uuid.generate(`lollipop-${c.cameraId}`) === uuid,
+      if (existing) {
+        this.log.info(`Restoring: ${cameraConfig.name} (${cameraConfig.ip})`);
+        new LollipopCameraAccessory(this, existing, cameraConfig);
+      } else {
+        this.log.info(`Adding: ${cameraConfig.name} (${cameraConfig.ip})`);
+        const accessory = new this.api.platformAccessory(
+          cameraConfig.name, uuid, this.api.hap.Categories.IP_CAMERA,
         );
-        if (!stillExists) {
-          this.log.info(`Removing stale accessory: ${accessory.displayName}`);
-          this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-          this.accessories.delete(uuid);
-        }
+        new LollipopCameraAccessory(this, accessory, cameraConfig);
+        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+        this.accessories.set(uuid, accessory);
       }
-    } catch (err) {
-      this.log.error('Failed to discover Lollipop cameras:', err.message);
-      this.log.error(err.stack);
+    }
+
+    // Remove stale accessories no longer in config
+    for (const [uuid, accessory] of this.accessories) {
+      const stillExists = cameras.some(c =>
+        this.api.hap.uuid.generate(`lollipop-${c.ip}`) === uuid,
+      );
+      if (!stillExists) {
+        this.log.info(`Removing stale accessory: ${accessory.displayName}`);
+        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+        this.accessories.delete(uuid);
+      }
     }
   }
 }

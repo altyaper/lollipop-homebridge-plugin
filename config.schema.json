@@ -1,7 +1,7 @@
 {
   "pluginAlias": "LollipopCamera",
   "pluginType": "platform",
-  "singular": true,
+  "singular": false,
   "schema": {
     "type": "object",
     "properties": {
@@ -10,17 +10,75 @@
         "type": "string",
         "default": "Lollipop"
       },
-      "email": {
-        "title": "Lollipop Account Email",
-        "type": "string",
-        "placeholder": "you@example.com"
+      "cameras": {
+        "title": "Cameras",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "Camera Name",
+              "type": "string",
+              "placeholder": "Andrea's Room"
+            },
+            "ip": {
+              "title": "Camera IP Address",
+              "type": "string",
+              "placeholder": "192.168.4.24",
+              "description": "Local IP of the Lollipop camera. Use a DHCP reservation to keep it fixed."
+            },
+            "hksv": {
+              "title": "Enable HomeKit Secure Video",
+              "type": "boolean",
+              "default": true
+            },
+            "enableSoundMachine": {
+              "title": "Enable Sound Machine",
+              "type": "boolean",
+              "default": true
+            },
+            "movementSensitivity": {
+              "title": "Movement Sensitivity",
+              "type": "integer",
+              "default": 10,
+              "oneOf": [
+                { "title": "Disabled", "enum": [0] },
+                { "title": "High", "enum": [2] },
+                { "title": "Medium", "enum": [5] },
+                { "title": "Low", "enum": [10] }
+              ],
+              "description": "Motion level threshold (0 = disabled, 2 = high, 5 = medium, 10 = low)."
+            },
+            "enableCryingDetectionSensor": {
+              "title": "Enable Crying Detection Sensor",
+              "type": "boolean",
+              "default": false
+            },
+            "enableCrossingDetectionSensor": {
+              "title": "Enable Crossing Detection Sensor",
+              "type": "boolean",
+              "default": false
+            },
+            "enableNoiseSensor": {
+              "title": "Enable Noise Sensor",
+              "type": "boolean",
+              "default": false
+            },
+            "contactSensors": {
+              "title": "Use Contact Sensors instead of Motion Sensors",
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": ["name", "ip"]
+        }
       },
-      "password": {
-        "title": "Lollipop Account Password",
-        "type": "string",
-        "placeholder": "your Lollipop app password"
+      "debug": {
+        "title": "Enable Debug Logging",
+        "type": "boolean",
+        "default": false
       }
     },
-    "required": ["name", "email", "password"]
+    "required": ["name", "cameras"]
   }
 }

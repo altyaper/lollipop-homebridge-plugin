@@ -20,7 +20,9 @@
     "node": ">=20.0.0",
     "homebridge": ">=1.6.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "mqtt": "^5.0.0"
+  },
   "devDependencies": {
     "homebridge": "^1.8.0"
   },
