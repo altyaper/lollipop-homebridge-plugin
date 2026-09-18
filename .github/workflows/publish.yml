@@ -1,36 +1,64 @@
-name: Publish to npm
+name: Test and publish
 
 on:
+  pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
+    tags: ['v*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
   publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+          cache: npm
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Bump patch version
-        run: npm version patch --no-git-tag-version
+      - name: Verify tag matches package version
+        run: >-
+          node -e "const expected = process.env.GITHUB_REF_NAME.replace(/^v/, '');
+          const actual = require('./package.json').version;
+          if (actual !== expected) {
+            console.error('Release tag must match the committed package version.');
+            process.exit(1);
+          }"
 
-      - name: Publish to npm
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
-          npm publish --registry https://registry.npmjs.org --access public
-
-      - name: Commit version bump
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json
-          git commit -m "chore: bump version [skip ci]"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/altyaper/lollipop-homebridge-plugin.git HEAD:main
+      - name: Publish committed version to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

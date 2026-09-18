@@ -1,6 +1,6 @@
 {
   "name": "homebridge-lollipop-plugin",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "displayName": "Lollipop Monitor",
   "icon": "assets/logo.png",
   "description": "Homebridge plugin for Lollipop baby monitor cameras",
@@ -10,6 +10,15 @@
     "url": "https://github.com/altyaper/lollipop-homebridge-plugin.git"
   },
   "main": "src/index.js",
+  "files": [
+    "src",
+    "assets/logo.png",
+    "config.schema.json",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
   "keywords": [
     "homebridge-plugin",
     "lollipop",
@@ -17,10 +26,11 @@
     "baby monitor"
   ],
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.0.0",
     "homebridge": ">=1.6.0"
   },
   "dependencies": {
+    "ffmpeg-for-homebridge": "^2.2.2",
     "mqtt": "^5.0.0"
   },
   "devDependencies": {

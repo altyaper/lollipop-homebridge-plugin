@@ -1,7 +1,7 @@
 'use strict';
 
-const crypto = require('crypto');
 const mqtt = require('mqtt');
+const { resolveRtspUrl, selectRuntimeFeatures } = require('./cameraConnection');
 const { StreamingDelegate } = require('./streamingDelegate');
 const { RecordingDelegate } = require('./recordingDelegate');
 const { Prebuffer } = require('./prebuffer');
@@ -34,16 +34,21 @@ class LollipopCameraAccessory {
 
   async initialize() {
     try {
+      if (this.config.rtspUrl) {
+        this.rtspUrl = resolveRtspUrl(this.config);
+        this.log.info(`[${this.config.name}] Using configured authenticated RTSP stream`);
+        this.removeMqttServices();
+        this.setupHomeKit(false);
+        return;
+      }
+
       this.log.info(`[${this.config.name}] Discovering pairingID via MQTT...`);
       await this.discoverPairingID();
 
-      const hash = crypto.createHash('md5').update(this.pairingID).digest('hex');
-      this.rtspUrl = `rtsp://${this.config.ip}:554/live/${hash}/ch00_0`;
-      this.log.info(`[${this.config.name}] pairingID: ${this.pairingID}`);
-      this.log.info(`[${this.config.name}] RTSP: ${this.rtspUrl}`);
+      this.rtspUrl = resolveRtspUrl(this.config, this.pairingID);
 
       await this.setupMQTT();
-      this.setupHomeKit();
+      this.setupHomeKit(true);
 
     } catch (err) {
       this.log.error(`[${this.config.name}] Initialization failed: ${err.message}`);
@@ -134,15 +139,38 @@ class LollipopCameraAccessory {
     });
   }
 
-  setupHomeKit() {
+  removeMqttServices() {
+    const { MotionSensor, ContactSensor, Switch } = this.hap.Service;
+    const sensorSubtypes = ['movement', 'crying', 'crossing', 'noise'];
+
+    for (const subtype of sensorSubtypes) {
+      for (const serviceType of [MotionSensor, ContactSensor]) {
+        const service = this.accessory.getServiceById(serviceType, subtype);
+        if (service) this.accessory.removeService(service);
+      }
+    }
+
+    for (const [serviceType, subtype] of [
+      [MotionSensor, 'hksv'],
+      [Switch, 'soundmachine'],
+    ]) {
+      const service = this.accessory.getServiceById(serviceType, subtype);
+      if (service) this.accessory.removeService(service);
+    }
+  }
+
+  setupHomeKit(mqttAvailable) {
     const hap = this.hap;
     const config = this.config;
+    const features = selectRuntimeFeatures(config, mqttAvailable);
 
     // Sensors
-    this.sensors = new SensorManager(this.log, hap, this.accessory, config);
+    if (features.sensors) {
+      this.sensors = new SensorManager(this.log, hap, this.accessory, config);
+    }
 
     // Sound machine
-    if (config.enableSoundMachine !== false) {
+    if (features.soundMachine) {
       this.soundMachine = new SoundMachine(this.log, hap, this.accessory, this.mqttClient, this.pairingID);
     }
 

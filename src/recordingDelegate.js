@@ -1,15 +1,18 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const { getFfmpegPath } = require('./ffmpeg');
 
 const FRAGMENT_LENGTH = 4000;
 
 class RecordingDelegate {
-  constructor(log, hap, rtspUrl, prebuffer) {
+  constructor(log, hap, rtspUrl, prebuffer, dependencies = {}) {
     this.log = log;
     this.hap = hap;
     this.rtspUrl = rtspUrl;
     this.prebuffer = prebuffer;
+    this.spawn = dependencies.spawn || spawn;
+    this.getFfmpegPath = dependencies.getFfmpegPath || getFfmpegPath;
     this.ffmpeg = null;
     this.recording = false;
 
@@ -69,16 +72,31 @@ class RecordingDelegate {
       'pipe:1',
     ];
 
-    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    this.ffmpeg = ff;
-    ff.stderr.on('data', () => {});
-
     const chunks = [];
     let resolve = null;
     let done = false;
+    let ff;
+
+    try {
+      ff = this.spawn(this.getFfmpegPath(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (_) {
+      this.recording = false;
+      this.log.error('[Recording] Unable to start FFmpeg. Verify the FFmpeg installation.');
+      return;
+    }
+
+    this.ffmpeg = ff;
+    ff.stderr.on('data', () => {});
 
     ff.stdout.on('data', chunk => {
       chunks.push(chunk);
+      if (resolve) { resolve(); resolve = null; }
+    });
+
+    ff.on('error', () => {
+      this.recording = false;
+      done = true;
+      this.log.error('[Recording] Unable to start FFmpeg. Verify the FFmpeg installation.');
       if (resolve) { resolve(); resolve = null; }
     });
 
@@ -117,7 +135,7 @@ class RecordingDelegate {
   }
 
   closeRecordingStream(streamId, error) {
-    if (error) this.log.error('[Recording] Stream %s closed with error: %s', streamId, error.message);
+    if (error) this.log.error('[Recording] Stream %s closed with an error.', streamId);
     this.stopRecording();
   }
 

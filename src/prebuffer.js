@@ -2,13 +2,16 @@
 
 const { spawn } = require('child_process');
 const { createServer } = require('net');
+const { getFfmpegPath } = require('./ffmpeg');
 
 const BUFFER_DURATION_MS = 15000;
 
 class Prebuffer {
-  constructor(log, rtspUrl) {
+  constructor(log, rtspUrl, dependencies = {}) {
     this.log = log;
     this.rtspUrl = rtspUrl;
+    this.spawn = dependencies.spawn || spawn;
+    this.getFfmpegPath = dependencies.getFfmpegPath || getFfmpegPath;
     this.buffer = []; // { data: Buffer, time: number }
     this.ffmpeg = null;
     this.ftyp = null;
@@ -33,8 +36,21 @@ class Prebuffer {
       'pipe:1',
     ];
 
-    this.ffmpeg = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+      this.ffmpeg = this.spawn(this.getFfmpegPath(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (_) {
+      this.running = false;
+      this.shouldRestart = false;
+      this.log.error('[Prebuffer] Unable to start FFmpeg. Verify the FFmpeg installation.');
+      return;
+    }
+
     this.ffmpeg.stderr.on('data', () => {});
+    this.ffmpeg.on('error', () => {
+      this.running = false;
+      this.shouldRestart = false;
+      this.log.error('[Prebuffer] Unable to start FFmpeg. Verify the FFmpeg installation.');
+    });
 
     let partial = Buffer.alloc(0);
 
