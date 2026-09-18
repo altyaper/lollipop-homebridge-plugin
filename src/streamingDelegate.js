@@ -1,12 +1,15 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const { getFfmpegPath } = require('./ffmpeg');
 
 class StreamingDelegate {
-  constructor(log, hap, rtspUrl) {
+  constructor(log, hap, rtspUrl, dependencies = {}) {
     this.log = log;
     this.hap = hap;
     this.rtspUrl = rtspUrl;
+    this.spawn = dependencies.spawn || spawn;
+    this.getFfmpegPath = dependencies.getFfmpegPath || getFfmpegPath;
     this.sessions = new Map();
   }
 
@@ -22,16 +25,34 @@ class StreamingDelegate {
     ];
 
     let data = Buffer.alloc(0);
-    let errOut = '';
-    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let ff;
+    let settled = false;
+    const finish = (error, image) => {
+      if (settled) return;
+      settled = true;
+      callback(error, image);
+    };
+
+    try {
+      ff = this.spawn(this.getFfmpegPath(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (_) {
+      this.log.error('[Snapshot] Unable to start FFmpeg. Verify the FFmpeg installation.');
+      finish(new Error('Snapshot failed'));
+      return;
+    }
+
     ff.stdout.on('data', chunk => { data = Buffer.concat([data, chunk]); });
-    ff.stderr.on('data', d => { errOut += d; });
+    ff.stderr.on('data', () => {});
+    ff.on('error', () => {
+      this.log.error('[Snapshot] Unable to start FFmpeg. Verify the FFmpeg installation.');
+      finish(new Error('Snapshot failed'));
+    });
     ff.on('close', code => {
       if (code === 0 && data.length > 0) {
-        callback(undefined, data);
+        finish(undefined, data);
       } else {
-        this.log.error('Snapshot failed (code %d): %s', code, errOut.slice(-300));
-        callback(new Error('Snapshot failed'));
+        this.log.error('[Snapshot] FFmpeg exited without producing an image (code %d).', code);
+        finish(new Error('Snapshot failed'));
       }
     });
   }
@@ -104,12 +125,24 @@ class StreamingDelegate {
       ];
 
       this.log.info('[Stream] Starting FFmpeg for session %s', sessionId);
-      let errOut = '';
-      const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      ff.stderr.on('data', d => { errOut += d; });
+      let ff;
+      try {
+        ff = this.spawn(this.getFfmpegPath(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (_) {
+        this.log.error('[Stream] Unable to start FFmpeg. Verify the FFmpeg installation.');
+        this.sessions.delete(sessionId);
+        callback(new Error('Unable to start stream'));
+        return;
+      }
+
+      ff.stderr.on('data', () => {});
+      ff.on('error', () => {
+        this.log.error('[Stream] Unable to start FFmpeg. Verify the FFmpeg installation.');
+        this.sessions.delete(sessionId);
+      });
       ff.on('close', code => {
         if (code !== 0 && code !== 255) {
-          this.log.error('[Stream] FFmpeg exited %d: %s', code, errOut.slice(-400));
+          this.log.error('[Stream] FFmpeg exited unexpectedly (code %d).', code);
         }
         this.sessions.delete(sessionId);
       });

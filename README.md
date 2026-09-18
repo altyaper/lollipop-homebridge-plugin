@@ -1,77 +1,59 @@
 <div align="center">
   <img src="assets/logo.png" width="120" alt="Lollipop Camera" />
-  <h1>homebridge-lollipop-monitor</h1>
-  <p>Homebridge plugin for Lollipop baby monitor cameras. Automatically discovers cameras from your Lollipop account and exposes them as native HomeKit IP cameras with live video and audio streaming.</p>
+  <h1>homebridge-lollipop-plugin</h1>
+  <p>Expose a Lollipop baby monitor as a HomeKit IP camera with live video and audio.</p>
 </div>
-
----
 
 ## Requirements
 
-- [Homebridge](https://homebridge.io) ≥ 1.6.0
-- Node.js ≥ 20
-- FFmpeg installed on the Homebridge host (`sudo apt install ffmpeg` on Raspberry Pi)
-- A HomeKit Hub (Apple TV, HomePod, or iPad) for remote access
+- Homebridge 1.6 or later
+- Node.js 22 or later
+- A Lollipop camera reachable from the Homebridge host on the same LAN
+- A HomeKit hub for remote viewing
+
+The package includes Homebridge's static FFmpeg build and falls back to a system `ffmpeg` executable when needed.
 
 ## Installation
 
-### Via Homebridge UI (recommended)
-
-1. Go to **Plugins** and search for `homebridge-lollipop-monitor`
-2. Click **Install**
-3. Click **Settings** and enter your Lollipop account email and password
-4. Restart Homebridge — your cameras will appear automatically in HomeKit
-
-### Via terminal
-
-```bash
-# On the Homebridge host
-cd /var/lib/homebridge
-npm install homebridge-lollipop-monitor
-```
-
-Then restart Homebridge and add the platform config (see below).
+In Homebridge UI, open **Plugins**, search for `homebridge-lollipop-plugin`, and select **Install**.
 
 ## Configuration
 
-Add the following to your Homebridge `config.json` under `platforms`:
+Current Lollipop firmware protects its local RTSP stream. Obtain the camera's authenticated internal RTSP URL through a trusted local process and treat it as a camera credential. Do not post it in issues or logs.
 
 ```json
 {
   "platform": "LollipopCamera",
   "name": "Lollipop",
-  "email": "your@email.com",
-  "password": "your_lollipop_password"
+  "cameras": [
+    {
+      "name": "Nursery",
+      "ip": "192.168.4.24",
+      "rtspUrl": "<authenticated RTSP URL>",
+      "hksv": false,
+      "enableSoundMachine": false,
+      "movementSensitivity": 0
+    }
+  ]
 }
 ```
 
-| Field      | Required | Description                    |
-|------------|----------|--------------------------------|
-| `name`     | Yes      | Platform display name          |
-| `email`    | Yes      | Your Lollipop account email    |
-| `password` | Yes      | Your Lollipop account password |
+The settings UI masks `rtspUrl` as a password. The plugin validates that the URL uses RTSP and points to the configured camera IP. It never logs the URL.
 
-## How It Works
+### Legacy firmware
 
-1. On startup the plugin logs in to the Lollipop API using your credentials
-2. It fetches all cameras associated with your account
-3. Each camera is registered as a HomeKit IP camera accessory
-4. An embedded HTTP proxy handles the camera's Digest authentication transparently
-5. FFmpeg pulls the HLS stream from the proxy and transcodes it to SRTP for HomeKit
+If the camera still permits unauthenticated local MQTT, `rtspUrl` may be omitted. The plugin discovers the pairing identifier over MQTT and enables supported sensors and sound controls. Newer authenticated firmware generally rejects this path, so camera streaming should be configured with `rtspUrl` instead.
 
-## Remote Access
+### HomeKit Secure Video
 
-To view your camera away from home, you need a **HomeKit Hub** — an Apple TV (4th gen+), HomePod, or iPad — left at home and signed into the same Apple ID. The hub acts as a relay for the video stream.
+Start with `hksv` disabled and verify reliable live video first. HKSV requires a HomeKit hub and a supported iCloud plan. MQTT-backed motion events are unavailable when the camera's authenticated firmware rejects local MQTT connections.
 
-## Web Viewer
+## Privacy and security
 
-The repo also includes a standalone Node.js web viewer (`server.js` + `index.html`) for watching the stream in any browser on your local network:
-
-```bash
-node server.js
-```
-
-Then open `http://localhost:8000`.
+- Keep the camera and Homebridge on a trusted LAN or isolated IoT VLAN.
+- Do not expose RTSP or MQTT camera ports to the internet.
+- Treat the authenticated RTSP URL like a password.
+- Keep Homebridge authentication and two-factor authentication enabled.
 
 ## License
 

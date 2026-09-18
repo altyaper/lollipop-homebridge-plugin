@@ -27,6 +27,13 @@
               "placeholder": "192.168.4.24",
               "description": "Local IP of the Lollipop camera. Use a DHCP reservation to keep it fixed."
             },
+            "rtspUrl": {
+              "title": "Authenticated RTSP URL",
+              "type": "string",
+              "format": "password",
+              "placeholder": "Paste the authenticated RTSP URL",
+              "description": "Authenticated RTSP URL for Lollipop cameras running firmware that protects local streaming."
+            },
             "hksv": {
               "title": "Enable HomeKit Secure Video",
               "type": "boolean",
