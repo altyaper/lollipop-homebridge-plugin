@@ -1,6 +1,6 @@
 {
   "name": "homebridge-lollipop-plugin",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "displayName": "Lollipop Monitor",
   "icon": "assets/logo.png",
   "description": "Homebridge plugin for Lollipop baby monitor cameras",
@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "ffmpeg-for-homebridge": "^2.2.2",
-    "mqtt": "^4.2.8"
+    "mqtt": "4.2.8"
   },
   "devDependencies": {
     "homebridge": "^1.8.0"

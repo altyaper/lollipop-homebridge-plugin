@@ -42,7 +42,7 @@ The settings UI masks `rtspUrl` as a password. The plugin validates that the URL
 
 ### Legacy firmware
 
-If the camera permits unauthenticated local MQTT, `rtspUrl` may be omitted. The plugin discovers the pairing identifier over MQTT and enables supported sensors and sound controls. This path deliberately uses the MQTT 4 compatibility line used by the working `senorshaun/homebridge-lollipop` implementation; MQTT 5 can fail its TLS handshake with these cameras. If legacy discovery still fails, configure the camera's authenticated `rtspUrl` instead.
+If the camera permits unauthenticated local MQTT, `rtspUrl` may be omitted. The plugin discovers the pairing identifier over MQTT and enables supported sensors and sound controls. This path deliberately pins MQTT `4.2.8` and uses the same minimal TLS options as the working `senorshaun/homebridge-lollipop` implementation; newer MQTT clients can fail the handshake with these cameras. If legacy discovery still fails, configure the camera's authenticated `rtspUrl` instead.
 
 ### HomeKit Secure Video
 

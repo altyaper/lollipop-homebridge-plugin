@@ -59,7 +59,6 @@ class LollipopCameraAccessory {
     return new Promise((resolve, reject) => {
       const client = mqtt.connect(`mqtts://${this.config.ip}:1883`, {
         rejectUnauthorized: false,
-        connectTimeout: 10000,
       });
 
       const timeout = setTimeout(() => {
@@ -93,7 +92,6 @@ class LollipopCameraAccessory {
     return new Promise((resolve) => {
       const client = mqtt.connect(`mqtts://${this.config.ip}:1883`, {
         rejectUnauthorized: false,
-        reconnectPeriod: 5000,
       });
 
       this.mqttClient = client;
